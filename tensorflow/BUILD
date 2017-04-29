@@ -406,6 +406,19 @@ cc_binary(
 
 cc_binary(
     name = "libtensorflow_cc.so",
+    linkopts = select({
+        "//tensorflow:darwin": [
+            "-Wl,-exported_symbols_list",  # This line must be directly followed by the exported_symbols.lds file
+            "//tensorflow/c:exported_symbols.lds",
+        ],
+        "//tensorflow:windows": [],
+        "//conditions:default": [
+            "-z defs",
+            "-s",
+            "-Wl,--version-script",  #  This line must be directly followed by the version_script.lds file
+            "//tensorflow/c:version_script.lds",
+        ],
+    }),
     linkshared = 1,
     deps = [
         "//tensorflow/c:c_api",
