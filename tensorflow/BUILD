@@ -412,7 +412,7 @@ cc_binary(
             "-z defs",
             "-s",
             "-Wl,--version-script",  #  This line must be directly followed by the version_script.lds file
-            "//tensorflow/c:version_script.lds",
+            "//tensorflow/cc:version_script.lds",
         ],
     }),
     linkshared = 1,
