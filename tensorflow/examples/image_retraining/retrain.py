@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-r"""Simple transfer learning with an Inception v3 architecture model.
+"""Simple transfer learning with an Inception v3 architecture model.
 
 With support for TensorBoard.
 
@@ -369,9 +369,12 @@ def create_bottleneck_file(bottleneck_path, image_lists, label_name, index,
   if not gfile.Exists(image_path):
     tf.logging.fatal('File does not exist %s', image_path)
   image_data = gfile.FastGFile(image_path, 'rb').read()
-  bottleneck_values = run_bottleneck_on_image(sess, image_data,
-                                              jpeg_data_tensor,
-                                              bottleneck_tensor)
+  try:
+    bottleneck_values = run_bottleneck_on_image(
+        sess, image_data, jpeg_data_tensor, bottleneck_tensor)
+  except:
+    raise RuntimeError('Error during processing file %s' % image_path)
+
   bottleneck_string = ','.join(str(x) for x in bottleneck_values)
   with open(bottleneck_path, 'w') as bottleneck_file:
     bottleneck_file.write(bottleneck_string)

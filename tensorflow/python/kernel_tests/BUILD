@@ -215,6 +215,19 @@ tf_py_test(
 )
 
 tf_py_test(
+    name = "decode_bmp_op_test",
+    size = "small",
+    srcs = ["decode_bmp_op_test.py"],
+    additional_deps = [
+        "//tensorflow/python:array_ops",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:framework_for_generated_wrappers",
+        "//tensorflow/python:image_ops",
+        "//tensorflow/python:nn_grad",
+    ],
+)
+
+tf_py_test(
     name = "decode_image_op_test",
     size = "small",
     srcs = ["decode_image_op_test.py"],
@@ -399,6 +412,22 @@ tf_py_test(
         "//tensorflow/python:gradients",
         "//tensorflow/python:logging_ops",
         "//tensorflow/python:math_ops",
+    ],
+)
+
+tf_py_test(
+    name = "lookup_ops_test",
+    size = "small",
+    srcs = ["lookup_ops_test.py"],
+    additional_deps = [
+        "//tensorflow/python:client",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:errors",
+        "//tensorflow/python:framework_for_generated_wrappers",
+        "//tensorflow/python:framework_test_lib",
+        "//tensorflow/python:lookup_ops",
+        "//tensorflow/python:sparse_tensor",
+        "//tensorflow/python:training",
     ],
 )
 
@@ -1098,6 +1127,7 @@ cuda_py_test(
         "//tensorflow/python:control_flow_ops",
         "//tensorflow/python:data_flow_ops",
         "//tensorflow/python:data_flow_ops_gen",
+        "//tensorflow/python:distributed_framework_test_lib",
         "//tensorflow/python:errors",
         "//tensorflow/python:framework",
         "//tensorflow/python:framework_for_generated_wrappers",
@@ -1219,6 +1249,7 @@ cuda_py_test(
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:framework_for_generated_wrappers",
     ],
+    tags = ["manual"],
 )
 
 cuda_py_test(
@@ -1548,6 +1579,7 @@ cuda_py_test(
         "//tensorflow/python:framework_for_generated_wrappers",
         "//tensorflow/python:math_ops",
     ],
+    shard_count = 4,
 )
 
 cuda_py_test(
@@ -1877,14 +1909,18 @@ cuda_py_test(
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:control_flow_ops",
         "//tensorflow/python:data_flow_ops_gen",
+        "//tensorflow/python:distributed_framework_test_lib",
         "//tensorflow/python:framework_for_generated_wrappers",
         "//tensorflow/python:gradients",
         "//tensorflow/python:math_ops",
         "//tensorflow/python:nn_grad",
+        "//tensorflow/python:training",
         "//tensorflow/python:tensor_array_grad",
         "//tensorflow/python:tensor_array_ops",
         "//tensorflow/python:variables",
     ],
+    flaky = 1,  # create_local_cluster sometimes times out.
+    tags = ["nomsan"],  # b/38390993
 )
 
 cuda_py_test(
@@ -1992,6 +2028,7 @@ cuda_py_test(
         "//tensorflow/python:nn_grad",
         "//tensorflow/python:nn_ops",
     ],
+    tags = ["manual"],
 )
 
 cuda_py_test(
@@ -2071,6 +2108,21 @@ cuda_py_test(
     ],
 )
 
+tf_py_test(
+    name = "neon_depthwise_conv_op_test",
+    size = "medium",
+    srcs = ["neon_depthwise_conv_op_test.py"],
+    additional_deps = [
+        "//third_party/py/numpy",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:framework_for_generated_wrappers",
+        "//tensorflow/python:array_ops",
+        "//tensorflow/python:nn",
+        "//tensorflow/python:nn_grad",
+        "//tensorflow/python:nn_ops",
+    ],
+)
+
 cuda_py_test(
     name = "division_future_test",
     size = "medium",
@@ -2080,6 +2132,7 @@ cuda_py_test(
         "//tensorflow/python:client_testlib",
         "//tensorflow/python:framework_for_generated_wrappers",
     ],
+    tags = ["manual"],
 )
 
 cuda_py_test(
@@ -2092,6 +2145,11 @@ cuda_py_test(
         "//tensorflow/python:framework_for_generated_wrappers",
         "//tensorflow/python:math_ops",
         "//tensorflow/python:spectral_ops",
+    ],
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",  # http://b/62067589
     ],
 )
 
@@ -2238,6 +2296,7 @@ cuda_py_test(
         "//tensorflow/python:sparse_grad",
         "//tensorflow/python:sparse_ops",
     ],
+    shard_count = 5,
 )
 
 cuda_py_test(
@@ -2277,8 +2336,23 @@ cuda_py_test(
 
 cuda_py_test(
     name = "stage_op_test",
-    size = "small",
+    size = "medium",
     srcs = ["stage_op_test.py"],
+    additional_deps = [
+        "//tensorflow/python:array_ops",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:framework_for_generated_wrappers",
+        "//tensorflow/python:math_ops",
+        "//tensorflow/python:util",
+        "//tensorflow/python:data_flow_ops",
+    ],
+    shard_count = 2,
+)
+
+cuda_py_test(
+    name = "map_stage_op_test",
+    size = "small",
+    srcs = ["map_stage_op_test.py"],
     additional_deps = [
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",
@@ -2347,11 +2421,15 @@ cuda_py_test(
         "//tensorflow/python:gradients",
         "//tensorflow/python:math_ops",
         "//tensorflow/python:math_ops_gen",
+        "//tensorflow/python:nn_grad",
         "//tensorflow/python:platform",
         "//tensorflow/python:variables",
     ],
     shard_count = 50,
-    tags = ["notap"],  # b/30226163
+    tags = [
+        "manual",
+        "notap",  # b/30226163
+    ],
 )
 
 cuda_py_test(
@@ -2362,7 +2440,6 @@ cuda_py_test(
         "//third_party/py/numpy",
         "//tensorflow/python:array_ops",
         "//tensorflow/python:client_testlib",
-        "//tensorflow/python:data_flow_grad",
         "//tensorflow/python:data_flow_ops",
         "//tensorflow/python:embedding_ops",
         "//tensorflow/python:framework",
@@ -2565,6 +2642,30 @@ tf_py_test(
         "//tensorflow/python:framework_for_generated_wrappers",
         "//tensorflow/python:math_ops",
         "//tensorflow/python:random_ops",
+    ],
+)
+
+tf_py_test(
+    name = "bucketize_op_test",
+    size = "small",
+    srcs = ["bucketize_op_test.py"],
+    additional_deps = [
+        "//third_party/py/numpy",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:framework_for_generated_wrappers",
+        "//tensorflow/python:math_ops",
+    ],
+)
+
+tf_py_test(
+    name = "sparse_cross_op_test",
+    size = "small",
+    srcs = ["sparse_cross_op_test.py"],
+    additional_deps = [
+        "//third_party/py/numpy",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:framework_for_generated_wrappers",
+        "//tensorflow/python:sparse_ops",
     ],
 )
 

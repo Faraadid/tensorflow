@@ -59,7 +59,7 @@ def identity_block(input_tensor, kernel_size, filters, stage, block):
 
   Arguments:
       input_tensor: input tensor
-      kernel_size: defualt 3, the kernel size of middle conv layer at main path
+      kernel_size: default 3, the kernel size of middle conv layer at main path
       filters: list of integers, the filterss of 3 conv layer at main path
       stage: integer, current stage label, used for generating layer names
       block: 'a','b'..., current block label, used for generating layer names
@@ -98,7 +98,7 @@ def conv_block(input_tensor, kernel_size, filters, stage, block, strides=(2,
 
   Arguments:
       input_tensor: input tensor
-      kernel_size: defualt 3, the kernel size of middle conv layer at main path
+      kernel_size: default 3, the kernel size of middle conv layer at main path
       filters: list of integers, the filterss of 3 conv layer at main path
       stage: integer, current stage label, used for generating layer names
       block: 'a','b'..., current block label, used for generating layer names
@@ -172,7 +172,7 @@ def ResNet50(include_top=True,
       input_shape: optional shape tuple, only to be specified
           if `include_top` is False (otherwise the input shape
           has to be `(224, 224, 3)` (with `channels_last` data format)
-          or `(3, 224, 244)` (with `channels_first` data format).
+          or `(3, 224, 224)` (with `channels_first` data format).
           It should have exactly 3 inputs channels,
           and width and height should be no smaller than 197.
           E.g. `(200, 200, 3)` would be one valid value.

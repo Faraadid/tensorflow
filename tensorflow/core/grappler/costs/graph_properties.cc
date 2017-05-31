@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "tensorflow/core/grappler/costs/graph_properties.h"
 
+#include <queue>
+#include <unordered_map>
+#include <unordered_set>
 #include "tensorflow/core/common_runtime/shape_refiner.h"
 #include "tensorflow/core/framework/tensor_shape.pb.h"
 #include "tensorflow/core/graph/graph_constructor.h"
@@ -23,12 +26,132 @@ limitations under the License.
 namespace tensorflow {
 namespace grappler {
 
+using shape_inference::InferenceContext;
+using shape_inference::ShapeAndType;
+using shape_inference::ShapeHandle;
+
+namespace {
+
+// Merges shapes <shapes_and_types>, determined from an EnqueueV2 node, into
+// <*queue_shapes_and_types>.
+Status MergeEnqueueShapesAndTypes(
+    const std::vector<ShapeAndType>& shapes_and_types, InferenceContext* qctx,
+    std::vector<ShapeAndType>* queue_shapes_and_types) {
+  if (shapes_and_types.size() != queue_shapes_and_types->size()) {
+    return errors::InvalidArgument(
+        "Enqueue nodes mixed number of tensors: ", shapes_and_types.size(),
+        "  vs ", queue_shapes_and_types->size());
+  }
+  for (int i = 0; i < shapes_and_types.size(); ++i) {
+    const ShapeAndType& a = shapes_and_types[i];
+    ShapeAndType& b = (*queue_shapes_and_types)[i];
+    if (a.dtype != b.dtype) {
+      return errors::InvalidArgument("Enqueue nodes mixed dtypes for tensor ",
+                                     i, ": ", DataTypeString(a.dtype), " vs ",
+                                     DataTypeString(b.dtype));
+    }
+
+    TF_RETURN_IF_ERROR(qctx->Merge(a.shape, b.shape, &b.shape));
+  }
+  return Status::OK();
+}
+
+}  // namespace
+
 Status GraphProperties::InferStatically() {
   Graph graph(OpRegistry::Global());
   ShapeRefiner shape_refiner(graph.versions().producer(), graph.op_registry());
+  shape_refiner.set_require_shape_inference_fns(false);
   ImportGraphDefOptions options;
   Status s = ImportGraphDef(options, item_.graph, &graph, &shape_refiner);
   TF_RETURN_IF_ERROR(s);
+
+  // List the resources and the nodes using them
+  std::unordered_map<const Node*, std::unordered_set<const Node*>> resources;
+  for (const Node* const node : graph.nodes()) {
+    for (int i = 0; i < node->num_inputs(); ++i) {
+      if (node->input_type(i) == DataType::DT_RESOURCE) {
+        const Node* resource;
+        TF_CHECK_OK(node->input_node(i, &resource));
+        resources[resource].insert(node);
+      }
+    }
+  }
+
+  // If we found a resource, try to propagate the shapes through it.
+  bool done = true;
+  do {
+    std::queue<const Node*> new_shapes;
+    for (const auto& resource_data : resources) {
+      const Node* qnode = resource_data.first;
+      StringPiece type(qnode->type_string());
+      if (!type.ends_with("QueueV2")) {
+        continue;
+      }
+      auto qctx = shape_refiner.GetContext(qnode);
+      if (!qctx) {
+        continue;
+      }
+
+      // Check to see if the shape is fully defined.
+      auto* queue_handle_data = qctx->output_handle_shapes_and_types(0);
+      if (queue_handle_data != nullptr) {
+        bool fully_defined = true;
+        for (const auto& shape_and_type : *queue_handle_data) {
+          if (!qctx->FullyDefined(shape_and_type.shape) ||
+              shape_and_type.dtype == DT_INVALID) {
+            fully_defined = false;
+          }
+        }
+        if (fully_defined) {
+          continue;
+        }
+      }
+
+      std::vector<ShapeAndType> queue_shapes_and_types;
+      if (queue_handle_data != nullptr) {
+        queue_shapes_and_types = *queue_handle_data;
+      }
+      for (const auto& node : resource_data.second) {
+        auto ctx = shape_refiner.GetContext(node);
+        if (!ctx) {
+          continue;
+        }
+        // TODO(bsteiner): handle EnqueueMany as well.
+        if (node->type_string().find("Enqueue") != std::string::npos &&
+            node->type_string().find("EnqueueMany") == std::string::npos) {
+          std::vector<ShapeAndType> shapes_and_types;
+          for (int i = 1; i < ctx->num_inputs(); ++i) {
+            shapes_and_types.push_back({ctx->input(i), node->input_type(i)});
+          }
+
+          if (queue_shapes_and_types.empty()) {
+            queue_shapes_and_types = shapes_and_types;
+          } else {
+            TF_RETURN_IF_ERROR(MergeEnqueueShapesAndTypes(
+                shapes_and_types, qctx, &queue_shapes_and_types));
+          }
+        }
+      }
+      if (!queue_shapes_and_types.empty() &&
+          qctx->MergeOutputHandleShapesAndTypes(0, queue_shapes_and_types)) {
+        new_shapes.push(qnode);
+      }
+    }
+    // Propagate the shapes in the transitive fan-out of the queue.
+    done = new_shapes.empty();
+    while (!new_shapes.empty()) {
+      const Node* n = new_shapes.front();
+      new_shapes.pop();
+      for (const Node* fanout : n->out_nodes()) {
+        bool updated = false;
+        TF_RETURN_IF_ERROR(shape_refiner.UpdateNode(fanout, &updated));
+        if (updated) {
+          new_shapes.push(fanout);
+        }
+      }
+    }
+  } while (!done);
 
   for (const Node* const node : graph.nodes()) {
     VLOG(1) << "<Node> " << node->name();
@@ -41,7 +164,7 @@ Status GraphProperties::InferStatically() {
     for (int i = 0; i < ctx->num_inputs(); ++i) {
       OpInfo::TensorProperties properties;
       properties.set_dtype(node->input_type(i));
-      shape_inference::ShapeHandle shp = ctx->input(i);
+      ShapeHandle shp = ctx->input(i);
       if (!ctx->RankKnown(shp)) {
         properties.mutable_shape()->set_unknown_rank(true);
       } else {
@@ -61,7 +184,7 @@ Status GraphProperties::InferStatically() {
     for (int i = 0; i < ctx->num_outputs(); ++i) {
       OpInfo::TensorProperties properties;
       properties.set_dtype(node->output_type(i));
-      shape_inference::ShapeHandle shp = ctx->output(i);
+      ShapeHandle shp = ctx->output(i);
       if (!ctx->RankKnown(shp)) {
         properties.mutable_shape()->set_unknown_rank(true);
       } else {
@@ -77,8 +200,8 @@ Status GraphProperties::InferStatically() {
 
     if (!node->assigned_device_name().empty()) {
       device_names_[node->name()] = node->assigned_device_name();
-    } else if (!node->def().device().empty()) {
-      device_names_[node->name()] = node->def().device();
+    } else if (!node->requested_device().empty()) {
+      device_names_[node->name()] = node->requested_device();
     } else {
       device_names_[node->name()] = "not set";
     }
@@ -128,6 +251,10 @@ Status GraphProperties::InferDynamically(Cluster* cluster) {
     device_names_[node.name()] = cost_node->device();
   }
   return Status::OK();
+}
+
+bool GraphProperties::HasInputProperties(const string& name) const {
+  return input_properties_.find(name) != input_properties_.end();
 }
 
 std::vector<OpInfo::TensorProperties> GraphProperties::GetInputProperties(

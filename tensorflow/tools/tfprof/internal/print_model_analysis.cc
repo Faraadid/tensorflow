@@ -40,13 +40,13 @@ string PrintModelAnalysis(const string* graph, const string* run_meta,
   graph_ptr->ParseFromString(*graph);
 
   std::unique_ptr<RunMetadata> run_meta_ptr;
-  if (run_meta) {
+  if (run_meta && !run_meta->empty()) {
     run_meta_ptr.reset(new RunMetadata());
     run_meta_ptr->ParseFromString(*run_meta);
   }
 
   std::unique_ptr<OpLog> op_log_ptr;
-  if (op_log) {
+  if (op_log && !op_log->empty()) {
     op_log_ptr.reset(new OpLog());
     op_log_ptr->ParseFromString(*op_log);
   }
@@ -56,18 +56,37 @@ string PrintModelAnalysis(const string* graph, const string* run_meta,
   TFStats tf_stats(std::move(graph_ptr), std::move(run_meta_ptr),
                    std::move(op_log_ptr), std::move(ckpt_reader));
 
-  Options opts = Options::FromProtoStr(*options);
+  Options opts;
+  tensorflow::Status s = Options::FromProtoStr(*options, &opts);
+  if (!s.ok()) {
+    fprintf(stderr, "%s\n", s.ToString().c_str());
+    return "";
+  }
 
-  if (opts.dump_to_file.empty()) {
+  if (opts.output_type == kOutput[1]) {
     printf("\n=========================Options=============================\n");
     printf("%s", opts.ToString().c_str());
     printf("\n==================Model Analysis Report======================\n");
-    TFProfNode root(tf_stats.PrintGraph(*command, opts));
+    string ret = "";
+    if (*command == kCmds[2] || *command == kCmds[3]) {
+      ret = tf_stats.ShowMultiGraphNode(*command, opts).SerializeAsString();
+    } else if (*command == kCmds[0] || *command == kCmds[1]) {
+      ret = tf_stats.ShowGraphNode(*command, opts).SerializeAsString();
+    } else {
+      fprintf(stderr, "Unknown command: %s\n", command->c_str());
+    }
     printf("\n======================End of Report==========================\n");
     fflush(stdout);
-    return root.SerializeAsString();
+    return ret;
   }
-  return tf_stats.PrintGraph(*command, opts).SerializeAsString();
+  if (*command == kCmds[2] || *command == kCmds[3]) {
+    return tf_stats.ShowMultiGraphNode(*command, opts).SerializeAsString();
+  } else if (*command == kCmds[0] || *command == kCmds[1]) {
+    return tf_stats.ShowGraphNode(*command, opts).SerializeAsString();
+  } else {
+    fprintf(stderr, "Unknown command: %s\n", command->c_str());
+    return "";
+  }
 }
 }  // namespace tfprof
 }  // namespace tensorflow

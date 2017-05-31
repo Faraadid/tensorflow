@@ -288,7 +288,7 @@ class GPUTracerImpl : public GPUTracer,
                       public port::Tracing::Engine {
  public:
   GPUTracerImpl();
-  ~GPUTracerImpl();
+  ~GPUTracerImpl() override;
 
   // GPUTracer interface:
   Status Start() override;
@@ -308,7 +308,7 @@ class GPUTracerImpl : public GPUTracer,
         // Remember the most recent ScopedAnnotation for each thread.
         tls_current_annotation.get() = annotation.c_str();
       }
-      ~Impl() { tls_current_annotation.get() = nullptr; }
+      ~Impl() override { tls_current_annotation.get() = nullptr; }
     };
     return new Impl(name);
   }
@@ -568,7 +568,6 @@ Status GPUTracerImpl::Collect(StepStatsCollector *collector) {
   const int id = 0;
   const string stream_device = strings::StrCat(prefix, "/gpu:", id, "/stream:");
   const string memcpy_device = strings::StrCat(prefix, "/gpu:", id, "/memcpy");
-  const string sync_device = strings::StrCat(prefix, "/gpu:", id, "/sync");
 
   mutex_lock l2(trace_mu_);
   for (const auto &rec : kernel_records_) {

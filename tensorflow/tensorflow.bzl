@@ -120,6 +120,11 @@ def if_x86(a):
       "//conditions:default": [],
   })
 
+def if_darwin(a):
+  return select({
+      clean_dep("//tensorflow:darwin"): a,
+      "//conditions:default": [],
+  })
 
 # LINT.IfChange
 def tf_copts():
@@ -241,7 +246,7 @@ def tf_gen_op_wrapper_cc(name,
 #            hdrs = [ "ops/array_ops_internal.h",
 #                     "ops/math_ops_internal.h" ],
 #            deps = [ ... ])
-# TODO(josh11b): Cleaner approach for hidden ops.
+# TODO(joshl): Cleaner approach for hidden ops.
 def tf_gen_op_wrappers_cc(name,
                           op_lib_names=[],
                           other_srcs=[],

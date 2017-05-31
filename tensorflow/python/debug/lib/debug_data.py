@@ -39,6 +39,30 @@ FETCHES_INFO_FILE_TAG = "fetches_info_"
 FEED_KEYS_INFO_FILE_TAG = "feed_keys_info_"
 
 
+class InconvertibleTensorProto(object):
+  """Represents a TensorProto that cannot be converted to np.ndarray."""
+
+  def __init__(self, tensor_proto, initialized=True):
+    """Constructor.
+
+    Args:
+      tensor_proto: the `TensorProto` object that cannot be represented as a
+        `np.ndarray` object.
+      initialized: (`bool`) whether the Tensor is initialized.
+    """
+    self._tensor_proto = tensor_proto
+    self._initialized = initialized
+
+  def __str__(self):
+    output = "" if self._initialized else "Uninitialized tensor:\n"
+    output += str(self._tensor_proto)
+    return output
+
+  @property
+  def initialized(self):
+    return self._initialized
+
+
 def load_tensor_from_event_file(event_file_path):
   """Load a tensor from an event file.
 
@@ -69,26 +93,27 @@ def load_tensor_from_event(event):
         summary.value[0] field.
 
   Returns:
-    The tensor value loaded from the event file, as a `numpy.ndarray`. For
-    uninitialized Tensors, returns `None`. For Tensors of data types that
-    cannot be converted to `numpy.ndarray` (e.g., `tf.resource`), return
-    `None`.
+    The tensor value loaded from the event file, as a `numpy.ndarray`, if
+    representation of the tensor value by a `numpy.ndarray` is possible.
+    For uninitialized Tensors, returns `None`. For Tensors of data types that
+    cannot be represented as `numpy.ndarray` (e.g., `tf.resource`), return
+    the `TensorProto` protobuf object without converting it to a
+    `numpy.ndarray`.
   """
 
-  if (event.summary.value[0].tensor.tensor_content or
-      event.summary.value[0].tensor.string_val):
+  tensor_proto = event.summary.value[0].tensor
+  if tensor_proto.tensor_content or tensor_proto.string_val:
     # Initialized tensor.
-    tensor_proto = event.summary.value[0].tensor
     if tensor_proto.dtype == types_pb2.DT_RESOURCE:
-      return None
+      tensor_value = InconvertibleTensorProto(tensor_proto)
     else:
       try:
         tensor_value = tensor_util.MakeNdarray(tensor_proto)
       except KeyError:
-        tensor_value = None
+        tensor_value = InconvertibleTensorProto(tensor_proto)
   else:
     # Uninitialized tensor or tensor of unconvertible data type.
-    tensor_value = None
+    tensor_value = InconvertibleTensorProto(tensor_proto, False)
 
   return tensor_value
 
@@ -215,7 +240,7 @@ def is_copy_node(node_name):
   return node_name.startswith("__copy_")
 
 
-def _is_debug_node(node_name):
+def is_debug_node(node_name):
   """Determine whether a node name is that of a debug node.
 
   Such nodes are inserted by TensorFlow core upon request in
@@ -230,7 +255,7 @@ def _is_debug_node(node_name):
   return node_name.startswith("__dbg_")
 
 
-def _parse_debug_node_name(node_name):
+def parse_debug_node_name(node_name):
   """Parse the name of a debug node.
 
   Args:
@@ -290,8 +315,10 @@ def has_inf_or_nan(datum, tensor):
 
   _ = datum  # Datum metadata is unused in this predicate.
 
-  if tensor is None:
+  if isinstance(tensor, InconvertibleTensorProto):
     # Uninitialized tensor doesn't have bad numerical values.
+    # Also return False for data types that cannot be represented as numpy
+    # arrays.
     return False
   elif (np.issubdtype(tensor.dtype, np.float) or
         np.issubdtype(tensor.dtype, np.complex) or
@@ -301,15 +328,17 @@ def has_inf_or_nan(datum, tensor):
     return False
 
 
+_CoreMetadata = collections.namedtuple("CoreMetadata", [
+    "global_step", "session_run_index", "executor_step_index", "input_names",
+    "output_names", "target_nodes"
+])
+
+
 def extract_core_metadata_from_event_proto(event):
   json_metadata = json.loads(event.log_message.message)
-  core_metadata = collections.namedtuple("CoreMetadata", [
-      "global_step", "session_run_count", "executor_step_count", "input_names",
-      "output_names", "target_nodes"
-  ])
-  return core_metadata(json_metadata["global_step"],
-                       json_metadata["session_run_count"],
-                       json_metadata["executor_step_count"],
+  return _CoreMetadata(json_metadata["global_step"],
+                       json_metadata["session_run_index"],
+                       json_metadata["executor_step_index"],
                        json_metadata["input_names"],
                        json_metadata["output_names"],
                        json_metadata["target_nodes"])
@@ -388,6 +417,8 @@ class DebugTensorDatum(object):
 
   def __repr__(self):
     return self.__str__()
+
+  # TODO(cais): (b/38325442) Add device name information to this class.
 
   def get_tensor(self):
     """Get tensor from the dump (`Event`) file.
@@ -492,6 +523,10 @@ class DebugTensorDatum(object):
     """
 
     return self._dump_size_bytes
+
+
+class WatchKeyDoesNotExistInDebugDumpDirError(ValueError):
+  pass
 
 
 class DebugDumpDir(object):
@@ -677,21 +712,21 @@ class DebugDumpDir(object):
 
     Of the three counters available in the return value, `global_step` is
     supplied by the caller of the debugged `Session.run()`, while
-    `session_run_count` and `executor_step_count` are determined by the state
+    `session_run_index` and `executor_step_index` are determined by the state
     of the core runtime, automatically. For the same fetch list, feed keys and
     debug tensor watch options, the same executor will be used and
-    `executor_step_count` should increase by one at a time. However, runs with
+    `executor_step_index` should increase by one at a time. However, runs with
     different fetch lists, feed keys and debug_tensor watch options that all
-    share the same `Session` object can lead to gaps in `session_run_count`.
+    share the same `Session` object can lead to gaps in `session_run_index`.
 
     Returns:
       If core metadata are loaded, a `namedtuple` with the fields:
         `global_step`: A global step count supplied by the caller of
           `Session.run()`. It is optional to the caller. If the caller did not
           supply this parameter, its value will be -1.
-        `session_run_count`: A counter for Run() calls to the underlying
+        `session_run_index`: A sorted index for Run() calls to the underlying
           TensorFlow `Session` object.
-        `executor_step_count`: A counter for invocations of a given runtime
+        `executor_step_index`: A counter for invocations of a given runtime
           executor. The same executor is re-used for the same fetched tensors,
           target nodes, input feed keys and debug tensor watch options.
         `input_names`: Names of the input (feed) Tensors.
@@ -791,12 +826,12 @@ class DebugDumpDir(object):
       ValueError: If duplicate node names are encountered.
     """
 
-    if _is_debug_node(node.name):
+    if is_debug_node(node.name):
       # This is a debug node. Parse the node name and retrieve the
       # information about debug watches on tensors. But do not include
       # the node in the graph.
       (watched_node_name, watched_output_slot, _,
-       debug_op) = _parse_debug_node_name(node.name)
+       debug_op) = parse_debug_node_name(node.name)
 
       self._debug_watches[watched_node_name][watched_output_slot].add(
           debug_op)
@@ -878,7 +913,7 @@ class DebugDumpDir(object):
       ctrl_inputs = self._node_ctrl_inputs[node]
       debug_op_inputs = []
       for ctrl_inp in ctrl_inputs:
-        if _is_debug_node(ctrl_inp):
+        if is_debug_node(ctrl_inp):
           debug_op_inputs.append(ctrl_inp)
       for debug_op_inp in debug_op_inputs:
         ctrl_inputs.remove(debug_op_inp)
@@ -948,7 +983,7 @@ class DebugDumpDir(object):
       slot = datum.output_slot
       # In some cases (e.g., system clocks with insufficient precision),
       # the upstream and downstream tensors may have identical timestamps, the
-      # following check examines this possibilty and avoids raising an error if
+      # following check examines this possibility and avoids raising an error if
       # that is the case.
       if not self._satisfied_at_timestamp(
           pending_inputs[node], datum.timestamp, start_i=i + 1):
@@ -1381,13 +1416,14 @@ class DebugDumpDir(object):
         may be dumped multiple times.
 
     Raises:
-      ValueError: If the tensor does not exist in the debug-dump data.
+      WatchKeyDoesNotExistInDebugDumpDirError: If the tensor does not exist in
+        the debug-dump data.
     """
 
     watch_key = _get_tensor_watch_key(node_name, output_slot, debug_op)
     if watch_key not in self._watch_key_to_datum:
-      raise ValueError("Watch key \"%s\" does not exist in the debug dump" %
-                       watch_key)
+      raise WatchKeyDoesNotExistInDebugDumpDirError(
+          "Watch key \"%s\" does not exist in the debug dump" % watch_key)
 
     return [datum.file_path for datum in self._watch_key_to_datum[watch_key]]
 
@@ -1406,13 +1442,14 @@ class DebugDumpDir(object):
       List of tensors (`numpy.ndarray`) loaded from the debug-dump file(s).
 
     Raises:
-      ValueError: If the tensor does not exist in the debug-dump data.
+      WatchKeyDoesNotExistInDebugDumpDirError: If the tensor does not exist in
+        the debug-dump data.
     """
 
     watch_key = _get_tensor_watch_key(node_name, output_slot, debug_op)
     if watch_key not in self._watch_key_to_datum:
-      raise ValueError("Watch key \"%s\" does not exist in the debug dump" %
-                       watch_key)
+      raise WatchKeyDoesNotExistInDebugDumpDirError(
+          "Watch key \"%s\" does not exist in the debug dump" % watch_key)
 
     return [datum.get_tensor() for datum in self._watch_key_to_datum[watch_key]]
 
@@ -1433,13 +1470,14 @@ class DebugDumpDir(object):
       (`list` of `int`) list of relative timestamps.
 
     Raises:
-      ValueError: If the tensor watch key does not exist in the debug dump data.
+      WatchKeyDoesNotExistInDebugDumpDirError: If the tensor watch key does not
+        exist in the debug dump data.
     """
 
     watch_key = _get_tensor_watch_key(node_name, output_slot, debug_op)
     if watch_key not in self._watch_key_to_datum:
-      raise ValueError("Watch key \"%s\" does not exist in the debug dump" %
-                       watch_key)
+      raise WatchKeyDoesNotExistInDebugDumpDirError(
+          "Watch key \"%s\" does not exist in the debug dump" % watch_key)
 
     return self._watch_key_to_rel_time[watch_key]
 
@@ -1457,13 +1495,14 @@ class DebugDumpDir(object):
       (`list` of `int`): list of dump file sizes in bytes.
 
     Raises:
-      ValueError: If the tensor watch key does not exist in the debug dump data.
+      WatchKeyDoesNotExistInDebugDumpDirError: If the tensor watch key does not
+        exist in the debug dump data.
     """
 
     watch_key = _get_tensor_watch_key(node_name, output_slot, debug_op)
     if watch_key not in self._watch_key_to_datum:
-      raise ValueError("Watch key \"%s\" does not exist in the debug dump" %
-                       watch_key)
+      raise WatchKeyDoesNotExistInDebugDumpDirError(
+          "Watch key \"%s\" does not exist in the debug dump" % watch_key)
 
     return self._watch_key_to_dump_size_bytes[watch_key]
 

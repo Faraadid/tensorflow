@@ -30,6 +30,7 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/init_main.h"
+#include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/protobuf/config.pb.h"
 #include "tensorflow/core/util/command_line_flags.h"
 #include "tensorflow/tools/tfprof/internal/tfprof_options.h"
@@ -68,22 +69,21 @@ int main(int argc, char** argv) {
   tensorflow::string FLAGS_run_meta_path = "";
   tensorflow::string FLAGS_op_log_path = "";
   tensorflow::string FLAGS_checkpoint_path = "";
-  tensorflow::int32 FLAGS_max_depth = 4;
+  tensorflow::int32 FLAGS_max_depth = 10;
   tensorflow::int64 FLAGS_min_bytes = 0;
   tensorflow::int64 FLAGS_min_micros = 0;
   tensorflow::int64 FLAGS_min_params = 0;
   tensorflow::int64 FLAGS_min_float_ops = 0;
-  tensorflow::string FLAGS_device_regexes = ".*";
+  tensorflow::int64 FLAGS_min_occurrence = 0;
   tensorflow::string FLAGS_order_by = "name";
-  tensorflow::string FLAGS_account_type_regexes = "Variable,VariableV2";
+  tensorflow::string FLAGS_account_type_regexes = ".*";
   tensorflow::string FLAGS_start_name_regexes = ".*";
   tensorflow::string FLAGS_trim_name_regexes = "";
   tensorflow::string FLAGS_show_name_regexes = ".*";
   tensorflow::string FLAGS_hide_name_regexes;
   bool FLAGS_account_displayed_op_only = false;
   tensorflow::string FLAGS_select = "params";
-  bool FLAGS_viz = false;
-  tensorflow::string FLAGS_dump_to_file = "";
+  tensorflow::string FLAGS_output = "";
   for (int i = 0; i < argc; i++) {
     fprintf(stderr, "%s\n", argv[i]);
   }
@@ -102,8 +102,8 @@ int main(int argc, char** argv) {
       tensorflow::Flag("min_micros", &FLAGS_min_micros, "min micros"),
       tensorflow::Flag("min_params", &FLAGS_min_params, "min params"),
       tensorflow::Flag("min_float_ops", &FLAGS_min_float_ops, "min float ops"),
-      tensorflow::Flag("device_regexes", &FLAGS_device_regexes,
-                       "device regexes"),
+      tensorflow::Flag("min_occurrence", &FLAGS_min_occurrence,
+                       "min occurrence"),
       tensorflow::Flag("order_by", &FLAGS_order_by, "order by"),
       tensorflow::Flag("account_type_regexes", &FLAGS_start_name_regexes,
                        "start name regexes"),
@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
                        &FLAGS_account_displayed_op_only,
                        "account displayed op only"),
       tensorflow::Flag("select", &FLAGS_select, "select"),
-      tensorflow::Flag("dump_to_file", &FLAGS_dump_to_file, "dump to file"),
+      tensorflow::Flag("output", &FLAGS_output, "output"),
   };
   tensorflow::string usage = tensorflow::Flags::Usage(argv[0], flag_list);
   bool parse_ok = tensorflow::Flags::Parse(&argc, argv, flag_list);
@@ -129,8 +129,6 @@ int main(int argc, char** argv) {
 
   fprintf(stderr, "%s\n", FLAGS_graph_path.c_str());
 
-  std::vector<tensorflow::string> device_regexes =
-      Split(FLAGS_device_regexes, ',', tensorflow::str_util::SkipEmpty());
   std::vector<tensorflow::string> account_type_regexes =
       Split(FLAGS_account_type_regexes, ',', tensorflow::str_util::SkipEmpty());
   std::vector<tensorflow::string> start_name_regexes =
@@ -143,6 +141,12 @@ int main(int argc, char** argv) {
       Split(FLAGS_hide_name_regexes, ',', tensorflow::str_util::SkipEmpty());
   std::vector<tensorflow::string> select =
       Split(FLAGS_select, ',', tensorflow::str_util::SkipEmpty());
+
+  tensorflow::string output_type;
+  std::map<tensorflow::string, tensorflow::string> output_options;
+  tensorflow::Status s = tensorflow::tfprof::ParseOutput(
+      FLAGS_output, &output_type, &output_options);
+  CHECK(s.ok()) << s.ToString();
 
   tensorflow::string cmd = "";
   if (argc == 1 && FLAGS_graph_path.empty()) {
@@ -160,12 +164,14 @@ int main(int argc, char** argv) {
         "Profiling everything!\n");
     return 0;
   } else if (argc > 1) {
-    if (tensorflow::string(argv[1]) == tensorflow::tfprof::kCmds[3]) {
+    if (tensorflow::string(argv[1]) == tensorflow::tfprof::kCmds[5]) {
       tensorflow::tfprof::PrintHelp();
       return 0;
     }
     if (tensorflow::string(argv[1]) == tensorflow::tfprof::kCmds[0] ||
-        tensorflow::string(argv[1]) == tensorflow::tfprof::kCmds[1]) {
+        tensorflow::string(argv[1]) == tensorflow::tfprof::kCmds[1] ||
+        tensorflow::string(argv[1]) == tensorflow::tfprof::kCmds[2] ||
+        tensorflow::string(argv[1]) == tensorflow::tfprof::kCmds[3]) {
       cmd = argv[1];
     }
   }
@@ -177,18 +183,30 @@ int main(int argc, char** argv) {
 
   std::unique_ptr<tensorflow::RunMetadata> run_meta(
       new tensorflow::RunMetadata());
-  if (!ReadBinaryProto(tensorflow::Env::Default(), FLAGS_run_meta_path,
-                       run_meta.get())
-           .ok()) {
-    run_meta.release();
+  if (!FLAGS_run_meta_path.empty()) {
+    s = ReadBinaryProto(tensorflow::Env::Default(), FLAGS_run_meta_path,
+                        run_meta.get());
+    if (!s.ok()) {
+      fprintf(stderr, "Failed to read run_meta_path: %s\n",
+              s.ToString().c_str());
+      return 1;
+    }
   }
 
   std::unique_ptr<tensorflow::tfprof::OpLog> op_log(
       new tensorflow::tfprof::OpLog());
-  if (!ReadBinaryProto(tensorflow::Env::Default(), FLAGS_op_log_path,
-                       op_log.get())
-           .ok()) {
-    op_log.release();
+  if (!FLAGS_op_log_path.empty()) {
+    tensorflow::string op_log_str;
+    s = tensorflow::ReadFileToString(tensorflow::Env::Default(),
+                                     FLAGS_op_log_path, &op_log_str);
+    if (!s.ok()) {
+      fprintf(stderr, "Failed to read op_log_path: %s\n", s.ToString().c_str());
+      return 1;
+    }
+    if (!tensorflow::ParseProtoUnlimited(op_log.get(), op_log_str)) {
+      fprintf(stderr, "Failed to parse op_log_path\n");
+      return 1;
+    }
   }
 
   std::unique_ptr<tensorflow::checkpoint::CheckpointReader> ckpt_reader;
@@ -209,13 +227,18 @@ int main(int argc, char** argv) {
                                       std::move(ckpt_reader));
   tensorflow::tfprof::Options opts(
       FLAGS_max_depth, FLAGS_min_bytes, FLAGS_min_micros, FLAGS_min_params,
-      FLAGS_min_float_ops, device_regexes, FLAGS_order_by, account_type_regexes,
-      start_name_regexes, trim_name_regexes, show_name_regexes,
-      hide_name_regexes, FLAGS_account_displayed_op_only, select, FLAGS_viz,
-      FLAGS_dump_to_file);
+      FLAGS_min_float_ops, FLAGS_min_occurrence, FLAGS_order_by,
+      account_type_regexes, start_name_regexes, trim_name_regexes,
+      show_name_regexes, hide_name_regexes, FLAGS_account_displayed_op_only,
+      select, output_type, output_options);
 
-  if (!cmd.empty()) {
-    tf_stat.PrintGraph(cmd, opts);
+  if (cmd == tensorflow::tfprof::kCmds[2] ||
+      cmd == tensorflow::tfprof::kCmds[3]) {
+    tf_stat.ShowMultiGraphNode(cmd, opts);
+    return 0;
+  } else if (cmd == tensorflow::tfprof::kCmds[0] ||
+             cmd == tensorflow::tfprof::kCmds[1]) {
+    tf_stat.ShowGraphNode(cmd, opts);
     return 0;
   }
 
@@ -240,12 +263,16 @@ int main(int argc, char** argv) {
       fprintf(stderr, "E: %s\n", s.ToString().c_str());
       continue;
     }
-    if (cmd == tensorflow::tfprof::kCmds[2]) {
+    if (cmd == tensorflow::tfprof::kCmds[4]) {
       opts = new_opts;
-    } else if (cmd == tensorflow::tfprof::kCmds[3]) {
+    } else if (cmd == tensorflow::tfprof::kCmds[5]) {
       tensorflow::tfprof::PrintHelp();
-    } else {
-      tf_stat.PrintGraph(cmd, new_opts);
+    } else if (cmd == tensorflow::tfprof::kCmds[2] ||
+               cmd == tensorflow::tfprof::kCmds[3]) {
+      tf_stat.ShowMultiGraphNode(cmd, new_opts);
+    } else if (cmd == tensorflow::tfprof::kCmds[0] ||
+               cmd == tensorflow::tfprof::kCmds[1]) {
+      tf_stat.ShowGraphNode(cmd, new_opts);
     }
   }
   return 0;

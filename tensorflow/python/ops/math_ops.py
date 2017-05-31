@@ -56,6 +56,7 @@ See the @{$python/math_ops} guide.
 @@acos
 @@asin
 @@atan
+@@atan2
 @@lgamma
 @@digamma
 @@erf
@@ -151,6 +152,7 @@ from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import gen_control_flow_ops
 from tensorflow.python.ops import gen_data_flow_ops
 from tensorflow.python.ops import gen_math_ops
+from tensorflow.python.ops import gen_nn_ops
 from tensorflow.python.ops import gen_sparse_ops
 from tensorflow.python.ops import gen_spectral_ops
 from tensorflow.python.ops import gen_state_ops
@@ -238,6 +240,12 @@ def abs(x, name=None):
 
 
 # pylint: enable=g-docstring-has-escape
+
+
+# pylint: disable=redefined-builtin
+def _bucketize(input, boundaries, name=None):
+  return gen_math_ops._bucketize(input=input, boundaries=boundaries, name=name)
+# pylint: enable=redefined-builtin
 
 
 class DivideDelegateWithName(object):
@@ -378,7 +386,7 @@ def sign(x, name=None):
     A `Tensor` or `SparseTensor`, respectively. Has the same type as `x`.
 
   @compatibility(numpy)
-  Equivalent to numpy.sign except for the behaviour for input values of NaN.
+  Equivalent to numpy.sign except for the behavior for input values of NaN.
   @end_compatibility
   """
   with ops.name_scope(name, "Sign", [x]) as name:
@@ -817,7 +825,16 @@ def _OverrideBinaryOperatorHelper(func, op_name, clazz_object=ops.Tensor):
   def binary_op_wrapper(x, y):
     with ops.name_scope(None, op_name, [x, y]) as name:
       if not isinstance(y, sparse_tensor.SparseTensor):
-        y = ops.convert_to_tensor(y, dtype=x.dtype.base_dtype, name="y")
+        try:
+          y = ops.convert_to_tensor(y, dtype=x.dtype.base_dtype, name="y")
+        except TypeError:
+          # If the RHS is not a tensor, it might be a tensor aware object
+          # that can implement the operator with knowledge of itself
+          # and the tensor.
+          if hasattr(type(y), "__r%s__" % op_name):
+            return NotImplemented
+          else:
+            raise
       return func(x, y, name=name)
 
   def binary_op_wrapper_sparse(sp_x, y):
@@ -1065,8 +1082,6 @@ _OverrideBinaryOperatorHelper(_mul_dispatch, "mul")
 _OverrideBinaryOperatorHelper(_div_python2, "div")
 _OverrideBinaryOperatorHelper(_truediv_python3, "truediv")
 _OverrideBinaryOperatorHelper(floordiv, "floordiv")
-# TODO(aselle): Switch mod to floor_mod when ready
-# _OverrideBinaryOperatorHelper(gen_math_ops.floor_mod, "mod")
 _OverrideBinaryOperatorHelper(gen_math_ops._floor_mod, "mod")
 _OverrideBinaryOperatorHelper(pow, "pow")
 
@@ -1919,6 +1934,12 @@ def accumulate_n(inputs, shape=None, tensor_dtype=None, name=None):
   NOTE: This operation is not differentiable and cannot be used if inputs depend
   on trainable variables. Please use `tf.add_n` for such cases.
 
+  Aside from differentiability, `tf.accumulate_n` performs the same operation as
+  `tf.add_n`, but does not wait for all of its inputs to be ready before
+  beginning to sum. This can save memory if inputs are ready at different times,
+  since minimum temporary storage is proportional to the output size rather than
+  the inputs size.
+
   For example:
 
   ```python
@@ -2004,6 +2025,24 @@ def sigmoid(x, name=None):
     return gen_math_ops._sigmoid(x, name=name)
 
 
+def log_sigmoid(x, name=None):
+  """Computes log sigmoid of `x` element-wise.
+
+  Specifically, `y = log(1 / (1 + exp(-x)))`.  For numerical stability,
+  we use `y = -tf.nn.softplus(-x)`.
+
+  Args:
+    x: A Tensor with type `float32` or `float64`.
+    name: A name for the operation (optional).
+
+  Returns:
+    A Tensor with the same type as `x`.
+  """
+  with ops.name_scope(name, "LogSigmoid", [x]) as name:
+    x = ops.convert_to_tensor(x, name="x")
+    return gen_math_ops._neg(gen_nn_ops.softplus(-x), name=name)
+
+
 def tanh(x, name=None):
   """Computes hyperbolic tangent of `x` element-wise.
 
@@ -2074,26 +2113,31 @@ def cumsum(x, axis=0, exclusive=False, reverse=False, name=None):
 
   By default, this op performs an inclusive cumsum, which means that the first
   element of the input is identical to the first element of the output:
-  ```prettyprint
-  tf.cumsum([a, b, c]) ==> [a, a + b, a + b + c]
+
+  ```python
+  tf.cumsum([a, b, c])  # => [a, a + b, a + b + c]
   ```
 
   By setting the `exclusive` kwarg to `True`, an exclusive cumsum is performed
   instead:
-  ```prettyprint
-  tf.cumsum([a, b, c], exclusive=True) ==> [0, a, a + b]
+
+  ```python
+  tf.cumsum([a, b, c], exclusive=True)  # => [0, a, a + b]
   ```
 
   By setting the `reverse` kwarg to `True`, the cumsum is performed in the
   opposite direction:
-  ```prettyprint
-  tf.cumsum([a, b, c], reverse=True) ==> [a + b + c, b + c, c]
+
+  ```python
+  tf.cumsum([a, b, c], reverse=True)  # => [a + b + c, b + c, c]
   ```
+
   This is more efficient than using separate `tf.reverse` ops.
 
   The `reverse` and `exclusive` kwargs can also be combined:
-  ```prettyprint
-  tf.cumsum([a, b, c], exclusive=True, reverse=True) ==> [b + c, c, 0]
+
+  ```python
+  tf.cumsum([a, b, c], exclusive=True, reverse=True)  # => [b + c, c, 0]
   ```
 
   Args:
@@ -2118,29 +2162,32 @@ def cumprod(x, axis=0, exclusive=False, reverse=False, name=None):
   """Compute the cumulative product of the tensor `x` along `axis`.
 
   By default, this op performs an inclusive cumprod, which means that the
-  first
-  element of the input is identical to the first element of the output:
-  ```prettyprint
-  tf.cumprod([a, b, c]) ==> [a, a * b, a * b * c]
+  first element of the input is identical to the first element of the output:
+
+  ```python
+  tf.cumprod([a, b, c])  # => [a, a * b, a * b * c]
   ```
 
   By setting the `exclusive` kwarg to `True`, an exclusive cumprod is
   performed
   instead:
-  ```prettyprint
-  tf.cumprod([a, b, c], exclusive=True) ==> [1, a, a * b]
+
+  ```python
+  tf.cumprod([a, b, c], exclusive=True)  # => [1, a, a * b]
   ```
 
   By setting the `reverse` kwarg to `True`, the cumprod is performed in the
   opposite direction:
-  ```prettyprint
-  tf.cumprod([a, b, c], reverse=True) ==> [a * b * c, b * c, c]
-  ```
-  This is more efficient than using separate `tf.reverse` ops.
 
+  ```python
+  tf.cumprod([a, b, c], reverse=True)  # => [a * b * c, b * c, c]
+  ```
+
+  This is more efficient than using separate `tf.reverse` ops.
   The `reverse` and `exclusive` kwargs can also be combined:
-  ```prettyprint
-  tf.cumprod([a, b, c], exclusive=True, reverse=True) ==> [b * c, c, 1]
+
+  ```python
+  tf.cumprod([a, b, c], exclusive=True, reverse=True)  # => [b * c, c, 1]
   ```
 
   Args:
@@ -2290,7 +2337,7 @@ def tensordot(a, b, axes, name=None):
     using `array_ops.transpose` and `array_ops.reshape`. The method takes a
     tensor and performs the correct transpose and reshape operation for a given
     set of indices. It returns the reshaped tensor as well as a list of indices
-    necesary to reshape the tensor again after matrix multiplication.
+    necessary to reshape the tensor again after matrix multiplication.
 
     Args:
       a: `Tensor`.

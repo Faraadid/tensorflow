@@ -21,7 +21,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from collections import defaultdict
 import json
 import os
 import warnings
@@ -92,7 +91,7 @@ _IMAGE_DATA_FORMAT = 'channels_last'
 def backend():
   """Publicly accessible method for determining the current backend.
 
-  Only exists for API compatibily with multi-backend Keras.
+  Only exists for API compatibility with multi-backend Keras.
 
   Returns:
       The string "tensorflow".
@@ -245,17 +244,40 @@ def set_image_data_format(data_format):
 
 
 def get_uid(prefix=''):
-  global _GRAPH_UID_DICTS  # pylint: disable=global-variable-not-assigned
-  graph = ops.get_default_graph()
-  if graph not in _GRAPH_UID_DICTS:
-    _GRAPH_UID_DICTS[graph] = defaultdict(int)
-  _GRAPH_UID_DICTS[graph][prefix] += 1
-  return _GRAPH_UID_DICTS[graph][prefix]
+  """Associates a string prefix with an integer counter in a TensorFlow graph.
+
+  Arguments:
+    prefix: String prefix to index.
+
+  Returns:
+    Unique integer ID.
+
+  Example:
+
+  ```
+    >>> get_uid('dense')
+    1
+    >>> get_uid('dense')
+    2
+  ```
+  """
+  layer_name_uids_collection = ops.get_collection('LAYER_NAME_UIDS')
+  if not layer_name_uids_collection:
+    layer_name_uids = {}
+    ops.add_to_collection('LAYER_NAME_UIDS', layer_name_uids)
+  else:
+    layer_name_uids = layer_name_uids_collection[0]
+  if prefix not in layer_name_uids:
+    layer_name_uids[prefix] = 1
+  else:
+    layer_name_uids[prefix] += 1
+  return layer_name_uids[prefix]
 
 
 def reset_uids():
-  global _GRAPH_UID_DICTS
-  _GRAPH_UID_DICTS = {}
+  layer_name_uids_collection = ops.get_collection_ref('LAYER_NAME_UIDS')
+  if layer_name_uids_collection:
+    layer_name_uids_collection.pop()
 
 
 def clear_session():
@@ -2595,7 +2617,7 @@ def in_train_phase(x, alt, training=None):
           (tensor or callable that returns a tensor).
       training: Optional scalar tensor
           (or Python boolean, or Python integer)
-          specifing the learning phase.
+          specifying the learning phase.
 
   Returns:
       Either `x` or `alt` based on the `training` flag.
@@ -2638,7 +2660,7 @@ def in_test_phase(x, alt, training=None):
           (tensor or callable that returns a tensor).
       training: Optional scalar tensor
           (or Python boolean, or Python integer)
-          specifing the learning phase.
+          specifying the learning phase.
 
   Returns:
       Either `x` or `alt` based on `K.learning_phase`.
