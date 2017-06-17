@@ -84,10 +84,11 @@ HOST_INCLUDES += -I/usr/local/include
 
 HOST_LIBS := \
 -lstdc++ \
--lprotobuf \
+libprotobuf.a	\
 -lpthread \
 -lm \
 -lz
+#-lprotobuf \
 
 # If we're on Linux, also link in the dl library.
 ifeq ($(HOST_OS),LINUX)
@@ -164,9 +165,10 @@ INCLUDES += -I/usr/local/include
 
 LIBS := \
 -lstdc++ \
--lprotobuf \
+libprotobuf.a
 -lz \
 -lm
+#-lprotobuf \
 
 ifeq ($(HAS_GEN_HOST_PROTOC),true)
 	PROTOC := $(MAKEFILE_DIR)/gen/protobuf-host/bin/protoc
@@ -255,10 +257,11 @@ ifeq ($(TARGET),ANDROID)
 
 	LIBS := \
 -lgnustl_static \
--lprotobuf \
+libprotobuf.a	\
 -llog \
 -lz \
 -lm
+#-lprotobuf \
 
 	LD := $(NDK_ROOT)/toolchains/arm-linux-androideabi-4.9/prebuilt/$(OS_PATH)-x86_64/arm-linux-androideabi/bin/ld
 
