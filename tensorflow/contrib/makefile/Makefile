@@ -18,6 +18,7 @@ MAKEFILE_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 HAS_GEN_HOST_PROTOC := \
 $(shell test -f $(MAKEFILE_DIR)/gen/protobuf-host/bin/protoc && echo "true" ||\
 echo "false")
+LIB_PROTOBUF_STATIC=/media/nkh/Data/00Faraadid/GIT-Repos/tensorflow/tensorflow/contrib/makefile/gen/protobuf/lib/libprotobuf.a
 
 # Hexagon integration
 ifdef HEXAGON_LIBS
@@ -84,7 +85,7 @@ HOST_INCLUDES += -I/usr/local/include
 
 HOST_LIBS := \
 -lstdc++ \
-libprotobuf.a	\
+$(LIB_PROTOBUF_STATIC)	\
 -lpthread \
 -lm \
 -lz
@@ -165,7 +166,7 @@ INCLUDES += -I/usr/local/include
 
 LIBS := \
 -lstdc++ \
-libprotobuf.a
+$(LIB_PROTOBUF_STATIC)	\
 -lz \
 -lm
 #-lprotobuf \
@@ -257,7 +258,7 @@ ifeq ($(TARGET),ANDROID)
 
 	LIBS := \
 -lgnustl_static \
-libprotobuf.a	\
+$(LIB_PROTOBUF_STATIC)	\
 -llog \
 -lz \
 -lm
